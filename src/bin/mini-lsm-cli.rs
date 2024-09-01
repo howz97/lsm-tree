@@ -1,17 +1,13 @@
-mod wrapper;
-
-use rustyline::DefaultEditor;
-use wrapper::mini_lsm_wrapper;
-
 use anyhow::Result;
 use bytes::Bytes;
 use clap::{Parser, ValueEnum};
-use mini_lsm_wrapper::compact::{
+use lsm_tree::compact::{
     CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions,
     TieredCompactionOptions,
 };
-use mini_lsm_wrapper::iterators::StorageIterator;
-use mini_lsm_wrapper::lsm_storage::{LsmStorageOptions, MiniLsm};
+use lsm_tree::iterators::StorageIterator;
+use lsm_tree::lsm_storage::{LsmStorageOptions, MiniLsm};
+use rustyline::DefaultEditor;
 use std::path::PathBuf;
 use std::sync::Arc;
 

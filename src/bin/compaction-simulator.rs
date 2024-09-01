@@ -1,19 +1,16 @@
-mod wrapper;
-use wrapper::mini_lsm_wrapper;
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use bytes::{Buf, BufMut, BytesMut};
 use clap::Parser;
-use mini_lsm_wrapper::compact::{
+use lsm_tree::compact::{
     LeveledCompactionController, LeveledCompactionOptions, SimpleLeveledCompactionController,
     SimpleLeveledCompactionOptions, TieredCompactionController, TieredCompactionOptions,
 };
-use mini_lsm_wrapper::key::KeyBytes;
-use mini_lsm_wrapper::lsm_storage::LsmStorageState;
-use mini_lsm_wrapper::mem_table::MemTable;
-use mini_lsm_wrapper::table::SsTable;
+use lsm_tree::key::KeyBytes;
+use lsm_tree::lsm_storage::LsmStorageState;
+use lsm_tree::mem_table::MemTable;
+use lsm_tree::table::SsTable;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
