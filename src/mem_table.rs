@@ -117,9 +117,6 @@ impl MemTable {
     }
 
     /// Put a key-value pair into the mem-table.
-    ///
-    /// In week 1, day 1, simply put the key-value pair into the skipmap.
-    /// In week 2, day 6, also flush the data to WAL.
     pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<usize> {
         let sz = self
             .approximate_size
@@ -127,6 +124,7 @@ impl MemTable {
         self.map
             .insert(key.to_key_bytes(), Bytes::copy_from_slice(value));
         if let Some(ref wal) = self.wal {
+            // TODO: concurrency bottleneck
             wal.put(key, value)?;
         }
         Ok(sz)

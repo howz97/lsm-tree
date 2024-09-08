@@ -246,7 +246,7 @@ impl MiniLsm {
     }
 
     pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        self.inner.txn_write_batch(batch)
+        self.inner.write_batch(batch)
     }
 
     pub fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
@@ -469,13 +469,13 @@ impl LsmStorageInner {
         Ok(None)
     }
 
-    pub fn txn_write_batch<T: AsRef<[u8]>>(
+    pub fn write_batch<T: AsRef<[u8]>>(
         self: &Arc<Self>,
         batch: &[WriteBatchRecord<T>],
     ) -> Result<()> {
-        let _lock = self.mvcc.commit_lock.lock();
         if self.options.serializable {
-            let commit_ts = self.mvcc().latest_commit_ts() + 1;
+            let _lk = self.mvcc.ssi_lock.lock();
+            let ts = self.mvcc().latest_commit_ts() + 1;
             let key_hashes = batch
                 .iter()
                 .map(|rec| farmhash::hash32(rec.key()))
@@ -483,38 +483,50 @@ impl LsmStorageInner {
             let txn_data = CommittedTxnData {
                 key_hashes,
                 read_ts: 0,
-                commit_ts,
+                commit_ts: ts,
             };
-            self.mvcc()
-                .committed_txns
-                .lock()
-                .insert(commit_ts, txn_data);
+            self.mvcc().committed_txns.lock().insert(ts, txn_data);
+            let sz = self.write_batch_si(batch)?;
+            self.maybe_freeze_mem(sz)
+        } else {
+            let ts = self.mvcc.incr_commit_ts();
+            let sz = self.write_batch_inn(batch, ts)?;
+            self.maybe_freeze_mem(sz)
         }
-        self.write_batch(batch)
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
-    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        let guard = self.mvcc.write_lock.lock();
+    pub fn write_batch_si<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<usize> {
+        let _guard = self.mvcc.si_lock.lock();
         let ts = self.mvcc.latest_commit_ts() + 1;
-        let mut sz = 0;
-        {
-            let state = self.state.read();
-            for rec in batch {
-                sz = match rec {
-                    WriteBatchRecord::Put(key, val) => {
-                        let key = KeySlice::from_slice(key.as_ref(), ts);
-                        state.memtable.put(key, val.as_ref())?
-                    }
-                    WriteBatchRecord::Del(key) => {
-                        let key = KeySlice::from_slice(key.as_ref(), ts);
-                        state.memtable.put(key, b"")?
-                    }
-                };
-            }
-        }
+        let sz = self.write_batch_inn(batch, ts)?;
         self.mvcc.update_commit_ts(ts);
-        drop(guard);
+        Ok(sz)
+    }
+
+    pub fn write_batch_inn<T: AsRef<[u8]>>(
+        &self,
+        batch: &[WriteBatchRecord<T>],
+        ts: u64,
+    ) -> Result<usize> {
+        let mut sz = 0;
+        let state = self.state.read();
+        for rec in batch {
+            sz = match rec {
+                WriteBatchRecord::Put(key, val) => {
+                    let key = KeySlice::from_slice(key.as_ref(), ts);
+                    state.memtable.put(key, val.as_ref())?
+                }
+                WriteBatchRecord::Del(key) => {
+                    let key = KeySlice::from_slice(key.as_ref(), ts);
+                    state.memtable.put(key, b"")?
+                }
+            };
+        }
+        Ok(sz)
+    }
+
+    pub fn maybe_freeze_mem(&self, sz: usize) -> Result<()> {
         if sz > self.options.target_sst_size {
             let guard = self.state_lock.lock();
             if self.state.read().memtable.approximate_size() > self.options.target_sst_size {
@@ -526,16 +538,30 @@ impl LsmStorageInner {
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
-        let txn = self.new_txn()?;
-        txn.put(key, value);
-        txn.commit()
+        if self.options.serializable {
+            let txn = self.new_txn()?;
+            txn.put(key, value);
+            txn.commit()
+        } else {
+            let ts = self.mvcc.incr_commit_ts();
+            let key = KeySlice::from_slice(key, ts);
+            let sz = self.state.read().memtable.put(key, value)?;
+            self.maybe_freeze_mem(sz)
+        }
     }
 
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
-        let txn = self.new_txn()?;
-        txn.delete(key);
-        txn.commit()
+        if self.options.serializable {
+            let txn = self.new_txn()?;
+            txn.delete(key);
+            txn.commit()
+        } else {
+            let ts = self.mvcc.incr_commit_ts();
+            let key = KeySlice::from_slice(key, ts);
+            let sz = self.state.read().memtable.put(key, b"")?;
+            self.maybe_freeze_mem(sz)
+        }
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {

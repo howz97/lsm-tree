@@ -1,3 +1,4 @@
-# mini-lsm-starter
-
-Starter code for Mini-LSM.
+Run test
+```shell
+cargo nextest run
+```

@@ -21,8 +21,8 @@ pub(crate) struct CommittedTxnData {
 }
 
 pub(crate) struct LsmMvccInner {
-    pub(crate) write_lock: Mutex<()>,
-    pub(crate) commit_lock: Mutex<()>,
+    pub(crate) si_lock: Mutex<()>,
+    pub(crate) ssi_lock: Mutex<()>,
     pub(crate) ts: Arc<Mutex<(u64, Watermark)>>,
     pub(crate) committed_txns: Arc<Mutex<BTreeMap<u64, CommittedTxnData>>>,
 }
@@ -30,8 +30,8 @@ pub(crate) struct LsmMvccInner {
 impl LsmMvccInner {
     pub fn new(initial_ts: u64) -> Self {
         Self {
-            write_lock: Mutex::new(()),
-            commit_lock: Mutex::new(()),
+            si_lock: Mutex::new(()),
+            ssi_lock: Mutex::new(()),
             ts: Arc::new(Mutex::new((initial_ts, Watermark::new()))),
             committed_txns: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -43,6 +43,12 @@ impl LsmMvccInner {
 
     pub fn update_commit_ts(&self, ts: u64) {
         self.ts.lock().0 = ts;
+    }
+
+    pub fn incr_commit_ts(&self) -> u64 {
+        let mut lk = self.ts.lock();
+        lk.0 += 1;
+        lk.0
     }
 
     /// All ts (strictly) below this ts can be garbage collected.

@@ -75,7 +75,11 @@ impl Transaction {
             bail!("transaction has already been commited");
         }
         let mvcc = self.inner.mvcc();
-        let _lock = mvcc.commit_lock.lock();
+        let _ssi_lk = if self.key_hashes.is_some() {
+            Some(mvcc.ssi_lock.lock())
+        } else {
+            None
+        };
         if let Some(rwset) = &self.key_hashes {
             let rwset = rwset.lock();
             if rwset.0.is_empty() {
@@ -114,7 +118,8 @@ impl Transaction {
                 ));
             }
         });
-        self.inner.write_batch(&batch)
+        let sz = self.inner.write_batch_si(&batch)?;
+        self.inner.maybe_freeze_mem(sz)
     }
 }
 
